@@ -1,0 +1,46 @@
+# =============================================================
+# docker-compose.yml — CSE Stock Prediction Frontend
+# =============================================================
+# Usage:
+#   Development (hot-reload):   docker compose up
+#   Production (nginx bundle):  docker compose --profile prod up
+# =============================================================
+
+services:
+  # -----------------------------------------------------------------
+  # Dev service — Vite hot-reload dev server on localhost:5173
+  # -----------------------------------------------------------------
+  frontend-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: dev              # Uses Stage 1 of the multi-stage build
+    container_name: trade-vision-frontend-dev
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount source code so edits on the host reflect instantly
+      - ..:/app
+      # Preserve the container's node_modules to avoid host/container conflicts
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
+
+  # -----------------------------------------------------------------
+  # Prod service — compiled bundle served by nginx on localhost:80
+  # Only starts when you pass --profile prod
+  # -----------------------------------------------------------------
+  frontend-prod:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: prod             # Uses Stage 3 of the multi-stage build
+    container_name: trade-vision-frontend-prod
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    profiles:
+      - prod

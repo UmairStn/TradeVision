@@ -1,0 +1,29 @@
+# Dependencies installed by npm/node
+node_modules
+
+# Vite production build output (not needed in image source context)
+dist
+dist-ssr
+
+# OS & editor noise
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.idea
+.vscode
+
+# Git history (not needed in the image)
+.git
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment overrides
+*.local
+.env.local
+.env.*.local
