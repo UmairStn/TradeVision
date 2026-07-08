@@ -1,77 +1,71 @@
-# React + TypeScript + Vite
+# TradeVision 📈
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+TradeVision is a modern, responsive web application prototype designed for analyzing and predicting trends in the Colombo Stock Exchange (CSE). Built with React, TypeScript, Vite, and Tailwind CSS, it offers a sleek user interface with AI prediction placeholders, real-time charting, and portfolio tracking.
 
-Currently, two official plugins are available:
+## ✨ Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Dynamic Theme System**: Fully integrated Light/Dark mode with seamless transitions.
+- **Stock Analyzer**: Search for CSE stocks, view real-time data, and analyze trends using interactive area charts (via Recharts).
+- **AI Predictions Panel**: Provides estimated next-day price movements and confidence scores based on mock algorithms.
+- **Portfolio Dashboard**: Track active holdings, calculate daily P&L, and monitor a custom watchlist.
+- **Market Overview**: View top gainers, losers, and most active stocks at a glance.
+- **Authentication UI**: Clean, glassmorphism-styled login and registration flows with password strength validation.
 
-## React Compiler
+## 🛠️ Tech Stack
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+- **Frontend**: React 19, TypeScript
+- **Build Tool**: Vite (with Rolldown/SWC)
+- **Styling**: Tailwind CSS v4, custom CSS variables
+- **Routing**: React Router v7
+- **Icons**: Lucide React
+- **Charts**: Recharts
+- **Containerization**: Docker & Nginx
 
-Note: This will impact Vite dev & build performances.
+## 🚀 Getting Started
 
-## Expanding the ESLint configuration
+You can run TradeVision using either Docker (recommended for consistency) or natively using NPM.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Option 1: Running with Docker (Recommended)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+The project includes a multi-stage Docker setup for both development (with hot-reloading) and production.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+1. Ensure Docker Desktop is running on your machine.
+2. Start the development environment:
+   ```bash
+   docker compose -f docker/docker-compose.yml up --build
+   ```
+3. Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+*Note: To stop the container, press `Ctrl + C` or run `docker compose -f docker/docker-compose.yml down`.*
 
-```
+### Option 2: Running Locally with NPM
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1. Install the dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the Vite development server:
+   ```bash
+   npm run dev
+   ```
+3. Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 📁 Project Structure
 
 ```
+src/
+├── components/       # Reusable UI elements (Navbar, Footer, LiveChart, etc.)
+├── context/          # Global state management (ThemeContext, StockContext)
+├── pages/            # Main application views (Home, Dashboard, Analyzer, etc.)
+├── services/         # API layer and mock data generation (api.ts)
+├── types/            # TypeScript interfaces and type definitions
+├── index.css         # Global styles and Tailwind configuration
+└── App.tsx           # Application root and route definitions
+```
+
+## ⚠️ Disclaimer
+
+This application is a **prototype** built for educational purposes. All stock data, prices, and AI predictions are currently powered by a mock API service (`src/services/api.ts`) and do not represent real-time financial data. **Do not use this for actual financial trading or advice.**
+
+---
+*Developed by Kashwinth*
