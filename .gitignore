@@ -1,0 +1,50 @@
+# ==========================================
+# TradeVision Master .gitignore
+# ==========================================
+
+# --- System Files ---
+.DS_Store
+Thumbs.db
+
+# --- IDEs and Editors ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# --- Python (Backend) ---
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+**/dist-backend/
+**/.eggs/
+**/*.egg-info/
+
+# --- Node / React (Frontend) ---
+**/node_modules/
+**/dist/
+**/build/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# --- Docker ---
+**/.docker/
+**/*.log
