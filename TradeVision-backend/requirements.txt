@@ -6,3 +6,6 @@ alembic
 xgboost
 torch
 transformers
+requests
+beautifulsoup4
+playwright

@@ -1,0 +1,12 @@
+# Exclude git, cache, and virtual environments from build context
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
+.venv/
+env/
+.env
