@@ -1,53 +1,48 @@
+# syntax=docker/dockerfile:1
 # =============================================================
-# Stage 1 — Development
-#   docker compose up (uses the 'dev' target by default)
-#   Hot-reload support via uvicorn --reload
+# Base Stage: Python runtime & core setup
 # =============================================================
-FROM python:3.11-slim AS dev
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies required for psycopg2
-RUN apt-get update && apt-get install -y \
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# STEP 1: Copy ONLY requirements.txt from context root
+COPY requirements.txt /app/requirements.txt
 
-# To prevent pip from resolving NVIDIA CUDA dependencies for torch:
-# We make the PyTorch CPU repository the PRIMARY index-url, and PyPI the EXTRA index-url.
-# This forces pip to pull torch metadata from the CPU registry (which has no CUDA dependencies),
-# while still allowing all other packages to be installed from PyPI.
-RUN pip install --no-cache-dir -r requirements.txt \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.org/simple
+# STEP 2: Install PyTorch CPU first, followed by remaining requirements
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r /app/requirements.txt && \
+    playwright install --with-deps chromium
 
-COPY . .
+# STEP 3: Copy remaining source code
+COPY . /app
+
+# =============================================================
+# Stage 1: Development Environment (target: dev)
+# =============================================================
+FROM base AS dev
+
+ENV NODE_ENV=development
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 # =============================================================
-# Stage 2 — Production
+# Stage 2: Production Environment (target: prod)
 # =============================================================
-FROM python:3.11-slim AS prod
+FROM base AS prod
 
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.org/simple
-
-COPY . .
+ENV NODE_ENV=production
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
