@@ -1,33 +1,38 @@
 from services.news_pipeline import NewsSentimentPipeline
+from services.scraper_mode import ScraperMode
 
 if __name__ == "__main__":
-    pipeline = NewsSentimentPipeline()
+
+    # ──────────────────────────────────────────────────────────────────
+    #  SWITCH MODE HERE:
+    #    ScraperMode.GOOGLE_NEWS_RSS  → fast, reliable, uses Google News
+    #    ScraperMode.BOTH             → runs both methods simultaneously!
+    # ──────────────────────────────────────────────────────────────────
+    MODE = ScraperMode.BOTH
+
+    pipeline = NewsSentimentPipeline(mode=MODE)
 
     # Target stocks
     target_stocks = [
-        {"ticker": "DIV", "name": "Dividend"},
-        {"ticker": "REP", "name": "Report"}
+        {"ticker": "JKH.N0000",  "name": "John Keells"},
+        {"ticker": "SAMP.N0000", "name": "Sampath Bank"},
+        {"ticker": "COMB.N0000", "name": "Commercial Bank"},
     ]
 
+    print(f"\n--- Running News Scraper + FinBERT Pipeline (Mode: {MODE.value}) ---\n")
+    processed_news = pipeline.process_news_for_stocks(target_stocks)
 
-
-    # Live CSE news sources
-    news_urls = [
-        "https://www.cse.lk/news-events/press-releases",
-        "https://economynext.com/",
-        "https://www.ft.lk/financial-services/42"
-    ]
-
-    print("\n--- Running News Scraper + FinBERT Pipeline ---\n")
-    processed_news = pipeline.process_news_for_stocks(target_stocks, news_urls)
-
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  FINAL SCRAPED NEWS SENTIMENT SCORES  ")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
-    for idx, item in enumerate(processed_news, start=1):
-        print(f"[{idx}] Ticker  : {item['ticker']} ({item['stock_name']})")
-        print(f"    Headline: {item['headline']}")
-        print(f"    Link    : {item['article_url']}")
-        print(f"    Scores  : {item['raw_scores']}")
-        print(f"    Score   : {item['sentiment_score']}  (-1.0 = Very Bearish, +1.0 = Very Bullish)\n")
+    if not processed_news:
+        print("No articles found. Try switching the MODE above.")
+    else:
+        for item in processed_news:
+            direction = "Bullish" if item['final_sentiment_score'] > 0.1 else ("Bearish" if item['final_sentiment_score'] < -0.1 else "Neutral")
+            print(f"  [{item['ticker']}]  {item['stock_name']}")
+            print(f"     <= 7 Days Sentiment (Weight 70%)  : {item['recent_sentiment_7d']:+.4f}  (Based on {item['recent_count']} articles)")
+            print(f"     8-30 Days Sentiment (Weight 30%)  : {item['older_sentiment_30d']:+.4f}  (Based on {item['older_count']} articles)")
+            print(f"     ---------------------------------------------")
+            print(f"     FINAL WEIGHTED SENTIMENT SCORE    : {item['final_sentiment_score']:+.4f}  ({direction})\n")
