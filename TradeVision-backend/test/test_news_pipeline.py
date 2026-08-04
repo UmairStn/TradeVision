@@ -29,10 +29,25 @@ if __name__ == "__main__":
     if not processed_news:
         print("No articles found. Try switching the MODE above.")
     else:
+        def fmt(score) -> str:
+            """Scores are None when nothing could be scored — not 0.0."""
+            return "   n/a  " if score is None else f"{score:+.4f}"
+
         for item in processed_news:
-            direction = "Bullish" if item['final_sentiment_score'] > 0.1 else ("Bearish" if item['final_sentiment_score'] < -0.1 else "Neutral")
+            final = item['final_sentiment_score']
+            if final is None:
+                direction = "No data"
+            elif final > 0.1:
+                direction = "Bullish"
+            elif final < -0.1:
+                direction = "Bearish"
+            else:
+                direction = "Neutral"
+
             print(f"  [{item['ticker']}]  {item['stock_name']}")
-            print(f"     <= 7 Days Sentiment (Weight 70%)  : {item['recent_sentiment_7d']:+.4f}  (Based on {item['recent_count']} articles)")
-            print(f"     8-30 Days Sentiment (Weight 30%)  : {item['older_sentiment_30d']:+.4f}  (Based on {item['older_count']} articles)")
+            print(f"     <= 7 Days Sentiment (Weight 70%)  : {fmt(item['recent_sentiment_7d'])}  (Based on {item['recent_count']} articles)")
+            print(f"     8-30 Days Sentiment (Weight 30%)  : {fmt(item['older_sentiment_30d'])}  (Based on {item['older_count']} articles)")
+            if item['failed_count']:
+                print(f"     Excluded (analysis failed)        : {item['failed_count']} articles")
             print(f"     ---------------------------------------------")
-            print(f"     FINAL WEIGHTED SENTIMENT SCORE    : {item['final_sentiment_score']:+.4f}  ({direction})\n")
+            print(f"     FINAL WEIGHTED SENTIMENT SCORE    : {fmt(final)}  ({direction})\n")
