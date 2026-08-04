@@ -22,6 +22,9 @@ WEBSITE_SEARCH_TEMPLATES = [
     "https://lbo.lk/?s={query}",
 ]
 
+# Trailing " - Publisher" / " | Publisher" that Google News appends to titles.
+_SOURCE_SUFFIX_RE = re.compile(r"\s+[-–—|]\s+[^-–—|]{1,60}$")
+
 
 class NewsScraper:
     def __init__(self, mode: ScraperMode = ScraperMode.GOOGLE_NEWS_RSS):
@@ -69,29 +72,58 @@ class NewsScraper:
     def clean_text(self, text: str) -> str:
         return re.sub(r'\s+', ' ', text).strip()
 
-    def _get_age_days(self, pub_date_str: str) -> int:
-        """Calculate how many days old an article is based on RSS pubDate."""
+    def _normalize_headline(self, headline: str) -> str:
+        """
+        Normalize a headline so the same story can be matched across sources.
+
+        Google News appends " - Publisher" to feed titles while the publisher's
+        own site does not, so that suffix is stripped before comparing.
+        """
+        text = _SOURCE_SUFFIX_RE.sub("", headline)
+        text = re.sub(r"[^\w\s]", "", text.lower())
+        return re.sub(r'\s+', ' ', text).strip()
+
+    def _get_age_days(self, pub_date_str: str) -> int | None:
+        """
+        Calculate how many days old an article is based on RSS pubDate.
+
+        Returns None when the date is missing or unparseable. Callers must treat
+        None as "unknown" — never as "fresh", or an undated article would land in
+        the most heavily weighted bucket.
+        """
         if not pub_date_str:
-            return 0  # Default to 0 (fresh) if no date found
+            return None
         try:
             dt = email.utils.parsedate_to_datetime(pub_date_str)
-            now = datetime.now(timezone.utc)
-            delta = now - dt
-            return max(0, delta.days)
-        except Exception:
-            return 0  # Default to 0 if parsing fails
+        except (TypeError, ValueError) as e:
+            print(f"  [RSS] Unparseable pubDate {pub_date_str!r}: {e}")
+            return None
+
+        # parsedate_to_datetime returns a naive datetime when the header carries
+        # no offset; subtracting that from an aware "now" would raise.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return max(0, (datetime.now(timezone.utc) - dt).days)
 
     def _fetch_page_playwright(self, url: str) -> str:
         """Fetch a page HTML using headless Chromium (WEBSITE_SEARCH mode)."""
+        page = None
         try:
             page = self._context.new_page()
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            content = page.content()
-            page.close()
-            return content
+            return page.content()
         except Exception as e:
             print(f"  [Playwright] Exception fetching {url}: {e}")
             return ""
+        finally:
+            # Close on the failure path too, otherwise a flaky site leaks a page
+            # (and its renderer process) on every timeout.
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
 
     def _fetch_article_body(self, article_url: str, use_playwright: bool = False) -> str:
         """Fetch the first 3 paragraphs of an article for FinBERT input."""
@@ -138,16 +170,32 @@ class NewsScraper:
             print("\n--- Running BOTH Modes: RSS + Website Search ---")
             rss_results = self._scrape_via_rss(stock_list)
             web_results = self._scrape_via_website_search(stock_list)
-            
-            # Combine and deduplicate
+
+            # Combine and deduplicate.
+            # URLs cannot be compared directly across sources: RSS yields
+            # news.google.com redirect links while website search yields direct
+            # publisher links, so the same story never matches on URL. Match on
+            # the normalized headline instead, and keep the RSS copy because it
+            # carries a real publication date.
             combined = rss_results.copy()
-            existing_signatures = set((r["article_url"], r["ticker"]) for r in combined)
-            
+            seen = {
+                (r["ticker"], self._normalize_headline(r["headline"]))
+                for r in combined
+            }
+
+            duplicates = 0
             for res in web_results:
-                if (res["article_url"], res["ticker"]) not in existing_signatures:
-                    combined.append(res)
-                    
-            print(f"--- BOTH Modes Complete: {len(combined)} Total Unique Articles Found ---\n")
+                signature = (res["ticker"], self._normalize_headline(res["headline"]))
+                if signature in seen:
+                    duplicates += 1
+                    continue
+                seen.add(signature)
+                combined.append(res)
+
+            print(
+                f"--- BOTH Modes Complete: {len(combined)} Total Unique Articles Found "
+                f"({duplicates} cross-source duplicates dropped) ---\n"
+            )
             return combined
         return []
 
@@ -183,21 +231,32 @@ class NewsScraper:
                 continue
 
             items = root.findall(".//item")
-            
-            # Filter to articles from the last 30 days
+
+            # Filter to articles from the last 30 days.
+            # Articles with no usable pubDate are skipped rather than assumed
+            # fresh — guessing "today" would push them into the 70%-weighted
+            # recent bucket on no evidence.
             fresh_items = []
+            undated = 0
             for item in items:
                 pub_date = item.findtext("pubDate", "")
                 age = self._get_age_days(pub_date)
-                
+
+                if age is None:
+                    undated += 1
+                    continue
                 if age <= 30:
                     # Tag the item with its calculated age so we can use it later
                     item.set("calculated_age", str(age))
                     fresh_items.append(item)
                     if len(fresh_items) >= 15:  # Pull up to 15 RSS articles per stock to balance fresh/old
                         break
-            
-            print(f"  Processing latest {len(fresh_items)} fresh articles (<= 30 days old) for '{company_name}'")
+
+            skipped_note = f", {undated} skipped for missing/unparseable date" if undated else ""
+            print(
+                f"  Processing latest {len(fresh_items)} fresh articles "
+                f"(<= 30 days old) for '{company_name}'{skipped_note}"
+            )
 
             for item in fresh_items:
                 headline = self.clean_text(item.findtext("title", ""))
@@ -287,7 +346,11 @@ class NewsScraper:
                         "headline": headline,
                         "full_text": combined_text,
                         "article_url": article_url,
-                        "age_days": 0,  # Website search results are assumed to be today's news
+                        # Search-result pages carry no reliable date, and these
+                        # results span any date range. None = unknown age, which
+                        # the pipeline weights conservatively rather than as
+                        # today's news.
+                        "age_days": None,
                         "scraped_at": datetime.now().isoformat(),
                         "source": "website_search",
                     })

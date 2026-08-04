@@ -9,33 +9,55 @@ class SentimentAnalyzer:
     def analyze_text(self, text: str) -> dict:
         """
         Analyzes the financial sentiment of a given text.
-        Returns a dictionary with the sentiment_score (-1.0 to 1.0) and raw_scores.
+
+        Returns a dict with:
+            ok:              True if the model produced a real score.
+            sentiment_score: -1.0 to 1.0, or None when ok is False.
+            raw_scores:      per-class probabilities (empty when ok is False).
+            error:           reason string, only present when ok is False.
+
+        Callers MUST check `ok` and exclude failures from any average. A failed
+        analysis is not neutral sentiment — averaging 0.0 for it would read as
+        "confidently neutral coverage" when in fact nothing was measured.
         """
         if not text or not text.strip():
-            return {"sentiment_score": 0.0, "raw_scores": {"positive": 0.0, "negative": 0.0, "neutral": 1.0}}
+            return {
+                "ok": False,
+                "sentiment_score": None,
+                "raw_scores": {},
+                "error": "empty_text",
+            }
 
         try:
-            # FinBERT processes max 512 tokens. We truncate the text roughly by characters to avoid errors.
-            truncated_text = text[:1500] 
-            
-            # top_k=None returns probabilities for all classes (positive, negative, neutral)
-            results = self.pipeline(truncated_text, top_k=None)
-            
+            # Let the tokenizer enforce FinBERT's real 512-token limit.
+            # A character cap cannot do this: text dense with numbers, tickers
+            # and punctuation tokenizes far worse than prose, so a "safe" slice
+            # can still overflow and raise.
+            results = self.pipeline(
+                text,
+                top_k=None,
+                truncation=True,
+                max_length=512,
+            )
+
             # Handle list structure depending on transformers version
             scores = results[0] if isinstance(results[0], list) else results
-            
+
             raw_scores = {item['label']: item['score'] for item in scores}
-            
-            # Calculate a final score between -1.0 and 1.0
+
             pos = raw_scores.get('positive', 0.0)
             neg = raw_scores.get('negative', 0.0)
-            
-            sentiment_score = pos - neg
-            
+
             return {
-                "sentiment_score": round(sentiment_score, 4),
-                "raw_scores": raw_scores
+                "ok": True,
+                "sentiment_score": round(pos - neg, 4),
+                "raw_scores": raw_scores,
             }
         except Exception as e:
             print(f"Error analyzing sentiment: {e}")
-            return {"sentiment_score": 0.0, "raw_scores": {"error": str(e)}}
+            return {
+                "ok": False,
+                "sentiment_score": None,
+                "raw_scores": {},
+                "error": str(e),
+            }
