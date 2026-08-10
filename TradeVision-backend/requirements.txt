@@ -3,9 +3,27 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 alembic
-xgboost
+# xgboost-cpu, not xgboost: the default wheel depends on nvidia-nccl-cu12,
+# which adds ~628MB of CUDA libraries that a CPU-only deployment never loads.
+# Same `import xgboost` API. Switch back only if you move to GPU training.
+#
+# Pinned because the same version must both TRAIN the model (ml/train_model.py)
+# and LOAD it at serve time. An unpinned rebuild could resolve to a different
+# major and fail to load an artifact trained earlier — in production.
+#
+# 3.2.* is the ceiling for this image: xgboost-cpu 3.3+ requires Python >=3.12
+# and the base image is python:3.11-slim. Raising this pin means bumping the
+# base image in docker/Dockerfile too.
+xgboost-cpu==3.2.*
 torch
 transformers
 requests
 beautifulsoup4
 playwright
+# Feature engineering + price data for the prediction engine.
+pandas
+numpy
+yfinance
+# XGBClassifier is the sklearn wrapper, so loading the trained artifact with
+# the same class it was saved from requires scikit-learn at runtime.
+scikit-learn

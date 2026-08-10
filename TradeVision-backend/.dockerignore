@@ -1,12 +1,56 @@
-# Exclude git, cache, and virtual environments from build context
+# Keeps the build context small and stops unrelated edits from busting the
+# `COPY . /app` layer cache.
+
+# Version control
 .git
 .gitignore
+.gitattributes
+
+# Python caches / build artifacts
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*.egg-info/
+build/
+dist/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyrefly_cache/
+
+# Virtual environments & local secrets
 venv/
 .venv/
 env/
 .env
+.env.*
+
+# Docker files themselves (BuildKit reads the Dockerfile out of band)
+docker/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docs — not needed at runtime
+AGENTS.md
+README.md
+*.md
+
+# ML artifacts that should be mounted or downloaded, never baked in
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.joblib
+*.pkl
+
+# Training data and training-only outputs. Needed to BUILD the model, never to
+# serve it — ~50 CSVs would otherwise add tens of MB to the deployed image.
+# Note models/*.json is deliberately NOT excluded: the trained artifact must
+# ship inside the image, since prod has no bind mount to read it from.
+ml/data/
+ml/*.png
+ml/*.csv
