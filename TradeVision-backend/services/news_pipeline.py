@@ -2,6 +2,7 @@ from services.scraper import NewsScraper
 from services.scraper_mode import ScraperMode
 # pyrefly: ignore [missing-import]
 from services.sentiment import SentimentAnalyzer
+from services.ticker_registry import Ticker
 
 # Per-stock article budget sent to FinBERT, and how it is divided between
 # sources in BOTH mode. Quotas are per-source so that RSS volume cannot crowd
@@ -17,11 +18,45 @@ RECENT_AGE_DAYS = 7
 RECENT_WEIGHT = 0.7
 OLDER_WEIGHT = 0.3
 
+# Score bands for the human-readable label. Matches the thresholds already used
+# by test/test_news_pipeline.py so the API and the manual script agree.
+BULLISH_THRESHOLD = 0.1
+BEARISH_THRESHOLD = -0.1
+
+
+def sentiment_label(score: float | None) -> str:
+    """Bullish / Bearish / Neutral from a [-1, 1] score. None means no data."""
+    if score is None:
+        return "Neutral"
+    if score > BULLISH_THRESHOLD:
+        return "Bullish"
+    if score < BEARISH_THRESHOLD:
+        return "Bearish"
+    return "Neutral"
+
 
 class NewsSentimentPipeline:
-    def __init__(self, mode: ScraperMode = ScraperMode.GOOGLE_NEWS_RSS):
+    def __init__(
+        self,
+        mode: ScraperMode = ScraperMode.GOOGLE_NEWS_RSS,
+        analyzer: SentimentAnalyzer | None = None,
+    ):
+        """
+        Args:
+            mode:     which scraping strategy to use.
+            analyzer: optional shared SentimentAnalyzer. Loading FinBERT costs
+                      ~400MB and several seconds, so the API injects one
+                      long-lived instance here and lets the scraper (cheap in RSS
+                      mode) be rebuilt per request. Left as None, the pipeline
+                      builds its own — keeping the original standalone behaviour.
+
+        Note on reuse: process_news_for_stocks() closes the scraper in a finally
+        block, which permanently stops Playwright. A pipeline instance is
+        therefore single-use in WEBSITE_SEARCH/BOTH mode. RSS mode never starts a
+        browser, so close() is a no-op and the instance can be reused freely.
+        """
         self.scraper = NewsScraper(mode=mode)
-        self.analyzer = SentimentAnalyzer()
+        self.analyzer = analyzer or SentimentAnalyzer()
 
     def _select_articles(self, articles: list[dict]) -> list[dict]:
         """
@@ -199,3 +234,54 @@ class NewsSentimentPipeline:
         finally:
             # Always clean up Playwright browser (no-op in RSS mode)
             self.scraper.close()
+
+    def get_sentiment(self, ticker: Ticker) -> dict:
+        """
+        One flat sentiment result for a single ticker, shaped for the API.
+
+        NEVER RAISES. Sentiment is a supporting signal, not the point of the
+        request — a scrape failure, an empty news week, or a FinBERT error must
+        degrade to neutral rather than fail the whole /analyze call. The `status`
+        field records which of those happened so a 0.0 score is never mistaken
+        for "measured, genuinely neutral coverage".
+
+        Returns:
+            {"score": float, "label": str, "headline_count": int, "status": str}
+        """
+        neutral = {
+            "score": 0.0,
+            "label": "Neutral",
+            "headline_count": 0,
+            "status": "no_data",
+        }
+
+        try:
+            # The scraper searches by COMPANY NAME, not ticker — Google News has
+            # no idea what "HAYL.N0000" is.
+            results = self.process_news_for_stocks(
+                [{"ticker": ticker.symbol, "name": ticker.name}]
+            )
+        except Exception as e:
+            print(f"[sentiment] Pipeline failed for {ticker.symbol}: {e}")
+            return {**neutral, "status": f"error: {e}"}
+
+        if not results:
+            return {**neutral, "status": "no_articles_found"}
+
+        result = results[0]
+        score = result.get("final_sentiment_score")
+
+        if score is None:
+            # Articles were found but none could be scored (all analyses failed).
+            return {
+                **neutral,
+                "headline_count": 0,
+                "status": "no_articles_scored",
+            }
+
+        return {
+            "score": round(float(score), 4),
+            "label": sentiment_label(score),
+            "headline_count": int(result.get("article_count", 0)),
+            "status": "ok",
+        }
