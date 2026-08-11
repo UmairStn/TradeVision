@@ -214,3 +214,49 @@ def latest_date(df: "pd.DataFrame") -> str | None:
         return pd.Timestamp(df.index[-1]).strftime("%Y-%m-%d")
     except Exception:
         return None
+
+
+def get_prediction_history(ticker: Ticker) -> "pd.DataFrame":
+    """
+    Fetches the 5-day historical data from the live CSE API for predictions.
+    This avoids the stale Yahoo Finance data feed.
+    """
+    from services import cse_api
+    
+    try:
+        raw = cse_api.historical_5day(ticker.symbol)
+    except Exception as e:
+        raise PriceDataError(f"Failed to fetch CSE 5-day history for {ticker.symbol}: {e}") from e
+
+    if not raw:
+        raise PriceDataError(f"No recent CSE historical data for {ticker.symbol}.")
+
+    df = pd.DataFrame(raw)
+    
+    # Map to standard OHLCV
+    df["Date"] = pd.to_datetime(df["time"], unit="ms")
+    df.set_index("Date", inplace=True)
+    df["Close"] = pd.to_numeric(df["price"], errors="coerce")
+    df["High"] = pd.to_numeric(df["high"], errors="coerce").fillna(df["Close"])
+    df["Low"] = pd.to_numeric(df["low"], errors="coerce").fillna(df["Close"])
+    df["Volume"] = pd.to_numeric(df["quantity"], errors="coerce")
+    
+    # CSE chart data doesn't include Open, approximate from previous Close
+    df["Open"] = df["Close"].shift(1).fillna(df["Close"])
+
+    df = df[REQUIRED_OHLCV].copy()
+    df = df.dropna(subset=["Close"]).sort_index()
+
+    if df.empty:
+        raise PriceDataError(f"Price data for {ticker.symbol} has no usable rows.")
+
+    df = drop_non_trading_rows(df)
+
+    if len(df) < MIN_ROWS:
+        raise PriceDataError(
+            f"Only {len(df)} usable trading day(s) for {ticker.symbol} after "
+            f"discarding non-trading rows (need {MIN_ROWS}). The counter may be too illiquid to model."
+        )
+
+    df.attrs["stale_days"] = _staleness_days(df)
+    return df

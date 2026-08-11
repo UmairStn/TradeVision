@@ -253,6 +253,7 @@ class NewsSentimentPipeline:
             "label": "Neutral",
             "headline_count": 0,
             "status": "no_data",
+            "articles": [],
         }
 
         try:
@@ -277,6 +278,7 @@ class NewsSentimentPipeline:
                 **neutral,
                 "headline_count": 0,
                 "status": "no_articles_scored",
+                "articles": result.get("articles", []),
             }
 
         return {
@@ -284,4 +286,5 @@ class NewsSentimentPipeline:
             "label": sentiment_label(score),
             "headline_count": int(result.get("article_count", 0)),
             "status": "ok",
+            "articles": result.get("articles", []),
         }

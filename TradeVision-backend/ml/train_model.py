@@ -61,8 +61,8 @@ def _drop_split_artifacts(df: "pd.DataFrame", name: str) -> "pd.DataFrame":
     contaminated = df["Current_Return"].abs() > MAX_ABS_DAILY_RETURN
 
     # Same test applied to each lag: a lag column IS an earlier Current_Return,
-    # so this covers rows i+1..i+3 without index arithmetic.
-    for lag in ("Return_Lag1", "Return_Lag2", "Return_Lag3"):
+    # so this covers rows i+1..i+2 without index arithmetic.
+    for lag in ("Return_Lag1", "Return_Lag2"):
         contaminated |= df[lag].abs() > MAX_ABS_DAILY_RETURN
 
     # Row i-1's label is the return at row i, so a bad return poisons it too.
