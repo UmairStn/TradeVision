@@ -12,6 +12,7 @@ export const Navbar: React.FC = () => {
     { name: 'Home', path: '/' },
     { name: 'Stock Analyzer', path: '/analyzer' },
     { name: 'Top Stocks', path: '/top-stocks' },
+    { name: 'AI Chat', path: '/chat' },
     { name: 'Dashboard', path: '/dashboard' },
   ];
 
@@ -28,7 +29,7 @@ export const Navbar: React.FC = () => {
                 <LineChart className="w-6 h-6" />
               </div>
               <span className="font-bold text-xl tracking-tight text-text-primary">
-                CSE Predict
+                TradeVision
               </span>
             </Link>
           </div>

@@ -7,7 +7,7 @@
   --color-text-secondary: var(--text-secondary);
   --color-accent-green: var(--accent-green);
   --color-accent-red: var(--accent-red);
-  --color-border-color: var(--border-color);
+  --color-border: var(--border-color);
 }
 
 :root {
@@ -40,4 +40,23 @@ body {
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Custom Premium Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
 }

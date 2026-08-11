@@ -14,10 +14,10 @@ export const StockCard: React.FC<StockCardProps> = ({ quote, onClick, selected }
   return (
     <div
       onClick={onClick}
-      className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer 
+      className={`p-4 rounded-xl border transition-all duration-300 cursor-pointer hover:-translate-y-1 hover:shadow-lg
         ${selected 
           ? 'border-accent-green bg-accent-green/5 shadow-md' 
-          : 'border-border bg-secondary hover:border-text-secondary hover:shadow-sm'
+          : 'border-border bg-secondary hover:border-accent-green/50'
         }`}
     >
       <div className="flex justify-between items-start mb-2">

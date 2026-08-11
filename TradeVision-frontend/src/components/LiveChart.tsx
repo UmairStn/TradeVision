@@ -1,7 +1,8 @@
 import React from 'react';
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,28 +22,21 @@ export const LiveChart: React.FC<LiveChartProps> = ({ data, ticker }) => {
   
   if (!data || data.length === 0) return null;
 
-  // Determine trend based on first and last data points
-  const firstPrice = data[0].close;
-  const lastPrice = data[data.length - 1].close;
-  const isPositive = lastPrice >= firstPrice;
-  
-  const strokeColor = isPositive ? 'var(--accent-green)' : 'var(--accent-red)';
   const gridColor = theme === 'dark' ? '#334155' : '#e2e8f0'; // matches border-color roughly
   const textColor = theme === 'dark' ? '#94a3b8' : '#64748b'; // text-secondary
 
+  // Calculate min and max for Y-axis scaling to make bars look reasonable
+  const minPrice = Math.min(...data.map(d => d.low || d.close));
+  const maxPrice = Math.max(...data.map(d => d.high || d.close));
+  const padding = (maxPrice - minPrice) * 0.1;
+
   return (
-    <div className="h-[400px] w-full mt-4">
+    <div className="h-[400px] w-full mt-4 animate-fade-in-up">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart
+        <BarChart
           data={data}
           margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
         >
-          <defs>
-            <linearGradient id={`colorGradient-${ticker}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={strokeColor} stopOpacity={0.3} />
-              <stop offset="95%" stopColor={strokeColor} stopOpacity={0} />
-            </linearGradient>
-          </defs>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
           <XAxis 
             dataKey="timestamp" 
@@ -56,10 +50,10 @@ export const LiveChart: React.FC<LiveChartProps> = ({ data, ticker }) => {
             axisLine={false}
           />
           <YAxis 
-            domain={['auto', 'auto']}
+            domain={[Math.max(0, minPrice - padding), maxPrice + padding]}
             stroke={textColor}
             tick={{ fill: textColor, fontSize: 12 }}
-            tickFormatter={(val) => `Rs ${val}`}
+            tickFormatter={(val) => `Rs ${val.toFixed(2)}`}
             axisLine={false}
             tickLine={false}
           />
@@ -68,21 +62,34 @@ export const LiveChart: React.FC<LiveChartProps> = ({ data, ticker }) => {
               backgroundColor: theme === 'dark' ? '#1e293b' : '#ffffff',
               borderColor: theme === 'dark' ? '#334155' : '#e2e8f0',
               borderRadius: '8px',
-              color: theme === 'dark' ? '#f8fafc' : '#0f172a'
+              color: theme === 'dark' ? '#f8fafc' : '#0f172a',
+              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)'
             }}
-            itemStyle={{ color: strokeColor }}
+            itemStyle={{ color: 'var(--text-primary)' }}
             labelStyle={{ color: textColor, marginBottom: '4px' }}
+            cursor={{ fill: theme === 'dark' ? '#334155' : '#e2e8f0', opacity: 0.4 }}
           />
-          <Area 
-            type="monotone" 
+          <Bar 
             dataKey="close" 
-            stroke={strokeColor} 
-            strokeWidth={2}
-            fillOpacity={1} 
-            fill={`url(#colorGradient-${ticker})`} 
             animationDuration={1000}
-          />
-        </AreaChart>
+            radius={[4, 4, 0, 0]}
+          >
+            {data.map((entry, index) => {
+              // Determine color: Green if close >= open, Red if close < open
+              const isPositive = entry.close >= entry.open;
+              // Use a darker green and red for a more premium, professional financial look
+              const darkGreen = theme === 'dark' ? '#16a34a' : '#15803d'; // green-600 / green-700
+              const darkRed = theme === 'dark' ? '#dc2626' : '#b91c1c';   // red-600 / red-700
+              
+              return (
+                <Cell 
+                  key={`cell-${index}`} 
+                  fill={isPositive ? darkGreen : darkRed} 
+                />
+              );
+            })}
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );
