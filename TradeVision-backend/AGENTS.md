@@ -15,12 +15,27 @@ through one HTTP endpoint.
    indicators, runs XGBoost to get P(next day up), blends in sentiment, and derives a
    predicted close from the stock's own realized volatility.
 
+Two more routers sit alongside it, both added to serve the React frontend:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/market/summary` | live CSE gainers / losers / most active, market status, ASPI |
+| `GET /api/v1/market/quote` `/symbols` `/history` `/intraday` | one quote, all ~285 listings, daily OHLC for charts, today's ticks |
+| `POST /api/v1/chat` | Gemini assistant, grounded in the above via function calling |
+| `GET /api/v1/chat/status` | whether a `GEMINI_API_KEY` is configured |
+
+`/market/*` reads the CSE's own API and is **display only** — see the CSE/Yahoo
+boundary below. `/chat` needs `GEMINI_API_KEY`; without it the app still boots and
+that one route returns 503.
+
 ## Tech stack
 
 - **API**: FastAPI + Uvicorn ([api/main.py](api/main.py)).
 - **ML**: `xgboost` (direction classifier), `pandas`/`numpy` (features).
 - **NLP**: `transformers` + `torch` (CPU), model `ProsusAI/finbert`.
 - **Prices**: `yfinance` — CSE symbols map as `JKH.N0000` → `JKH-N0000.CM`.
+- **Live market data**: `requests` against `www.cse.lk/api` (POST-only, undocumented).
+- **Chat**: `google-genai` (`from google import genai`), model `gemini-2.5-flash`.
 - **Scraping**: `urllib` + `beautifulsoup4` (RSS); `playwright` headless Chromium (website mode).
 - **Declared but unused**: `sqlalchemy`, `psycopg2-binary`, `alembic` (Postgres).
 - **Python 3.11**. `PYTHONPATH=/app` — imports are rooted at the backend dir.
@@ -160,7 +175,44 @@ including ones absent from training.
   **Always call `.close()`** (the pipeline does, in a `finally`).
 - [sentiment.py](services/sentiment.py) — FinBERT wrapper. Callers **must** check `ok`; a failed
   analysis is excluded from averages rather than counted as neutral 0.0.
-- [cache.py](services/cache.py) — thread-safe TTL cache used for prices and sentiment.
+- [cache.py](services/cache.py) — thread-safe TTL cache used for prices, sentiment and
+  CSE market lists.
+- [cse_api.py](services/cse_api.py) — **live** CSE market data from `www.cse.lk/api`.
+  `top_gainers()`, `top_losers()`, `most_active()`, `all_companies()`, `quote()`,
+  `market_status()`, `market_indices()`, `intraday()`. **Display only — see the
+  boundary below.** The only module that knows CSE's wire format, which is worth
+  keeping in one place: every endpoint is POST-only (GET returns 405), the losers
+  endpoint is spelled `topLooses`, and `tradeSummary` wraps its rows in
+  `reqTradeSummery`.
+- [gemini_chat.py](services/gemini_chat.py) — Gemini transport, tool *declarations*, and
+  the tool loop for the chat assistant. It does **not** implement the tools:
+  handlers are injected by [api/routes/chat.py](api/routes/chat.py), so `services/`
+  never imports `api/`. Boots fine with no `GEMINI_API_KEY` and with `google-genai`
+  uninstalled — `/chat` then returns 503 and nothing else changes.
+
+### The CSE/Yahoo boundary — CSE feeds the screen, Yahoo feeds the model
+
+`cse_api.py` exists because of the staleness contract above: Yahoo has stopped
+updating CSE symbols, so a live price has to come from somewhere else. It is
+**additive**, and the split is not negotiable:
+
+| Consumer | Source | Why |
+|---|---|---|
+| Quotes, movers, search, tickers, ASPI | `cse_api.py` | genuinely current |
+| `build_feature_row()`, training, `/analyze` | `price_data.py` (Yahoo) | the artifact was trained on Yahoo's unadjusted bars |
+| `/market/history` (the chart) | `price_data.py` (Yahoo) | see below |
+
+**CSE data must never reach `build_feature_row()`.** Routing it there would shift
+every feature away from what training saw — the exact train/serve skew this
+codebase is built to prevent. The two feeds are on the same price scale (checked:
+JKH reads 22.60 on Yahoo's forward-filled tail against 19.90 live), so the gap is
+staleness, not adjustment, and `warnings[]` already reports it.
+
+`/market/history` uses Yahoo rather than CSE for a second reason:
+`companyChartDataByStock` returns the same **5 daily bars** whether you ask for
+`period=7` or `period=365`, so it cannot draw a 1M or 3M chart. CSE's `period=1`
+intraday tick feed *is* good and is exposed separately as `/market/intraday`. The
+side benefit is that the chart and the model show the same bars.
 
 ## Running — everything goes through Docker
 
@@ -241,6 +293,10 @@ it into the image.
   [services/ticker_registry.py](services/ticker_registry.py) with its real company name.
 - New API endpoint → a new router in [api/routes/](api/routes/), included from
   [api/main.py](api/main.py).
+- New Gemini chat capability → declare the tool in `TOOL_DECLARATIONS`
+  ([services/gemini_chat.py](services/gemini_chat.py)) **and** add a handler of the same
+  name to `TOOL_HANDLERS` ([api/routes/chat.py](api/routes/chat.py)). A declaration with
+  no handler is rejected at request time rather than failing mid-conversation.
 
 ## Known limitations (worth stating plainly)
 
@@ -248,8 +304,10 @@ it into the image.
   months are forward-filled placeholders (see the data contract above). Multi-year
   history is real, so **training is unaffected**, but live predictions are made from
   the last genuinely traded bar, which may be months old. The response says so in
-  `as_of` plus a warning. Getting truly current prices needs a different source
-  (CSE's own site, or a paid feed) — that is a data-sourcing problem, not a code one.
+  `as_of` plus a warning. [services/cse_api.py](services/cse_api.py) now supplies a
+  genuinely current price for **display**, so the UI can show a live quote beside a
+  stale prediction — but the model still trains and infers on Yahoo, so the gap
+  itself is not closed. Closing it means retraining on a CSE-sourced history.
 - **Next-day direction is near the noise floor.** Beating the majority-class baseline by
   1–3% is a genuine result; anything dramatically higher usually indicates leakage.
   `ml/train_model.py` prints the baseline next to accuracy for exactly this reason.
