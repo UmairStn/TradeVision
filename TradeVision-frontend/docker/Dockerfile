@@ -28,6 +28,15 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# Backend URL for the API client (src/services/api.ts).
+#
+# This is a BUILD arg, not a runtime env var: Vite inlines import.meta.env at
+# compile time, so the value is frozen into the bundle by `npm run build` below.
+# Setting it on the running container has no effect. Defaults to localhost:8000,
+# which is right when the backend is published on the same machine as the browser.
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
+
 COPY package.json package-lock.json ./
 RUN npm ci
 

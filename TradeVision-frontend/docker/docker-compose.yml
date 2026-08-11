@@ -27,6 +27,10 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
+    # VITE_API_URL is not listed here on purpose. The `..:/app` mount above puts
+    # TradeVision-frontend/.env at /app/.env, which is Vite's own native location,
+    # so the dev server reads it straight from there — the same single file a host
+    # `npm run dev` uses.
     restart: unless-stopped
 
   # -----------------------------------------------------------------
@@ -38,6 +42,23 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       target: prod             # Uses Stage 3 of the multi-stage build
+      args:
+        # Baked into the bundle at build time — see the ARG note in the Dockerfile.
+        #
+        # Unlike frontend-dev, this does NOT pick up TradeVision-frontend/.env by
+        # itself: build args come from Compose interpolation, which only reads the
+        # host shell or an explicit --env-file. To build against the very same file
+        # the dev server uses, run this from TradeVision-frontend/:
+        #
+        #   docker compose -f docker/docker-compose.yml --env-file .env \
+        #     --profile prod up --build
+        #
+        # Note --env-file resolves against your shell's directory, not against this
+        # compose file — so it is `.env`, not `../.env`, from the stack root.
+        #
+        # Or for a one-off target:
+        #   VITE_API_URL=https://api.example.com docker compose ... up --build
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
     container_name: trade-vision-frontend-prod
     ports:
       - "80:80"
