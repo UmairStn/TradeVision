@@ -42,6 +42,10 @@ services:
     container_name: trade-vision-backend-prod
     ports:
       - "8000:8000"
+    volumes:
+      # Without this, prod re-downloads FinBERT (~400MB) on every container
+      # recreate. Same volume as dev, so the model is fetched once for both.
+      - hf_cache:/root/.cache/huggingface
     environment:
       - NODE_ENV=production
       - PYTHONPATH=/app
