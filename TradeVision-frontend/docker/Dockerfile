@@ -38,7 +38,7 @@ RUN npm run build
 
 # =============================================================
 # Stage 3 — Production
-#   docker build --target prod -t cse-predict-frontend .
+#   docker build --target prod -t trade-vision-frontend .
 #   Serves the compiled bundle via nginx on http://localhost:80
 # =============================================================
 FROM nginx:1.27-alpine AS prod

@@ -28,7 +28,7 @@ export const Navbar: React.FC = () => {
                 <LineChart className="w-6 h-6" />
               </div>
               <span className="font-bold text-xl tracking-tight text-text-primary">
-                CSE Predict
+                TradeVision
               </span>
             </Link>
           </div>
