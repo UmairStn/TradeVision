@@ -29,7 +29,7 @@ export const Login: React.FC = () => {
             <LineChart className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Welcome Back</h1>
-          <p className="text-text-secondary mt-2">Log in to your CSE Predict account</p>
+          <p className="text-text-secondary mt-2">Log in to your TradeVision account</p>
         </div>
 
         <form onSubmit={handleSubmit} className="relative z-10 space-y-5">
