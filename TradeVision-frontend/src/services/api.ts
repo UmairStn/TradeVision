@@ -2,27 +2,386 @@ import type {
   StockPrice,
   StockQuote,
   MarketSummary,
+  MarketIndices,
   WatchlistItem,
   UserPortfolio,
   PredictionResult,
+  ChatMessage,
 } from '../types/stock';
 
-// --- MOCK DATA ---
+/**
+ * Backend client.
+ *
+ * Everything market-related is live: quotes, gainers/losers and the search list
+ * come from the CSE via the backend, charts come from the backend's Yahoo
+ * history, and predictions come from the real XGBoost + FinBERT pipeline.
+ *
+ * The backend speaks snake_case (matching Python convention); the components
+ * speak camelCase. This file is the only place that translation happens.
+ *
+ * Portfolio and watchlist are still mock — they need per-user persistence, which
+ * arrives with auth and the database.
+ */
 
-const mockQuotes: StockQuote[] = [
-  { ticker: 'JKH.N0000', name: 'John Keells Holdings', price: 195.5, change: 2.5, changePercent: 1.29, volume: 1540000, marketCap: '250B' },
-  { ticker: 'COMB.N0000', name: 'Commercial Bank of Ceylon', price: 98.2, change: -1.1, changePercent: -1.11, volume: 890000, marketCap: '120B' },
-  { ticker: 'BIL.N0000', name: 'Bukit Darah PLC', price: 380.0, change: 5.0, changePercent: 1.33, volume: 120000, marketCap: '95B' },
-  { ticker: 'EXPO.N0000', name: 'Expolanka Holdings', price: 145.0, change: -3.5, changePercent: -2.36, volume: 2100000, marketCap: '140B' },
-  { ticker: 'DIST.N0000', name: 'Distilleries Company of SL', price: 28.5, change: 0.8, changePercent: 2.89, volume: 3500000, marketCap: '130B' },
-  { ticker: 'HNB.N0000', name: 'Hatton National Bank', price: 165.0, change: 1.5, changePercent: 0.92, volume: 650000, marketCap: '90B' },
-];
+const API_BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 
-const mockMarketSummary: MarketSummary = {
-  gainers: [mockQuotes[4], mockQuotes[2], mockQuotes[0]],
-  losers: [mockQuotes[3], mockQuotes[1]],
-  mostActive: [mockQuotes[4], mockQuotes[3], mockQuotes[0]],
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...init,
+    });
+  } catch {
+    // fetch only rejects on network-level failure, which in practice means the
+    // backend is not running. Say that instead of "Failed to fetch".
+    throw new Error(
+      `Cannot reach the TradeVision API at ${API_BASE}. Is the backend running?`
+    );
+  }
+
+  if (!response.ok) {
+    // FastAPI puts the useful message in `detail`.
+    let detail = `Request failed with status ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+    } catch {
+      /* non-JSON error body; the status line is all we have */
+    }
+    throw new Error(detail);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+// --- wire types (snake_case, as the backend sends them) ----------------------
+
+interface ApiQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  change_percent: number;
+  volume: number;
+  turnover?: number;
+  previous_close?: number | null;
+  day_high?: number | null;
+  day_low?: number | null;
+  day_open?: number | null;
+  market_cap?: string | null;
+}
+
+interface ApiIndices {
+  aspi: number | null;
+  aspi_change: number | null;
+  aspi_change_percent: number | null;
+  turnover: number | null;
+  share_volume: number | null;
+  trades: number | null;
+  listed_companies: number | null;
+}
+
+interface ApiMarketSummary {
+  status: string;
+  gainers: ApiQuote[];
+  losers: ApiQuote[];
+  most_active: ApiQuote[];
+  indices: ApiIndices;
+  warnings: string[];
+}
+
+interface ApiPricePoint {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface ApiAnalysis {
+  symbol: string;
+  company_name: string;
+  as_of: string | null;
+  latest_price: number | null;
+  sentiment_analysis: {
+    score: number;
+    label: string;
+    headline_count: number;
+    status: string;
+  };
+  price_prediction: {
+    predicted_close: number;
+    change_percent: number;
+    trend: string;
+    probability_up: number;
+    probability_up_adjusted: number;
+    confidence: number;
+    model_status: string;
+  } | null;
+  model_status: string;
+  warnings: string[];
+}
+
+// --- mappers ------------------------------------------------------------------
+
+const mapQuote = (q: ApiQuote): StockQuote => ({
+  ticker: q.symbol,
+  name: q.name,
+  price: q.price,
+  change: q.change,
+  changePercent: q.change_percent,
+  volume: q.volume,
+  marketCap: q.market_cap ?? undefined,
+  turnover: q.turnover,
+  previousClose: q.previous_close ?? undefined,
+  dayHigh: q.day_high ?? undefined,
+  dayLow: q.day_low ?? undefined,
+  dayOpen: q.day_open ?? undefined,
+});
+
+const mapIndices = (i: ApiIndices): MarketIndices => ({
+  aspi: i.aspi,
+  aspiChange: i.aspi_change,
+  aspiChangePercent: i.aspi_change_percent,
+  turnover: i.turnover,
+  shareVolume: i.share_volume,
+  trades: i.trades,
+  listedCompanies: i.listed_companies,
+});
+
+/** The backend's 'Upward' | 'Downward' | 'Neutral' -> the UI's lowercase form. */
+const mapTrend = (trend: string | undefined): 'up' | 'down' | 'neutral' => {
+  const key = (trend ?? '').toLowerCase();
+  if (key.startsWith('up')) return 'up';
+  if (key.startsWith('down')) return 'down';
+  return 'neutral';
 };
+
+// --- market data --------------------------------------------------------------
+
+export const fetchMarketSummary = async (): Promise<MarketSummary> => {
+  const data = await request<ApiMarketSummary>('/api/v1/market/summary');
+  return {
+    gainers: data.gainers.map(mapQuote),
+    losers: data.losers.map(mapQuote),
+    mostActive: data.most_active.map(mapQuote),
+    status: data.status,
+    indices: mapIndices(data.indices),
+    warnings: data.warnings ?? [],
+  };
+};
+
+export const fetchStockQuote = async (ticker: string): Promise<StockQuote> => {
+  const data = await request<ApiQuote>(
+    `/api/v1/market/quote?symbol=${encodeURIComponent(ticker)}`
+  );
+  return mapQuote(data);
+};
+
+export const fetchStockHistory = async (
+  ticker: string,
+  days: number
+): Promise<StockPrice[]> => {
+  const data = await request<{ points: ApiPricePoint[] }>(
+    `/api/v1/market/history?symbol=${encodeURIComponent(ticker)}&days=${days}`
+  );
+  return data.points;
+};
+
+/**
+ * The full company list, cached in-module.
+ *
+ * /market/symbols returns all ~285 listed companies. The analyzer's search box
+ * calls this on every debounced keystroke, so refetching each time would be
+ * wasteful; filtering happens client-side against one cached list. The TTL is
+ * short enough that prices in the results stay roughly current.
+ */
+const SYMBOL_CACHE_MS = 60_000;
+let symbolCache: { at: number; quotes: StockQuote[] } | null = null;
+let symbolInFlight: Promise<StockQuote[]> | null = null;
+
+const loadSymbols = async (): Promise<StockQuote[]> => {
+  if (symbolCache && Date.now() - symbolCache.at < SYMBOL_CACHE_MS) {
+    return symbolCache.quotes;
+  }
+  // Share one request between concurrent callers rather than firing several on
+  // the first render.
+  if (!symbolInFlight) {
+    symbolInFlight = request<{ symbols: ApiQuote[] }>('/api/v1/market/symbols')
+      .then((data) => {
+        const quotes = data.symbols.map(mapQuote);
+        symbolCache = { at: Date.now(), quotes };
+        return quotes;
+      })
+      .finally(() => {
+        symbolInFlight = null;
+      });
+  }
+  return symbolInFlight;
+};
+
+export const searchStocks = async (query: string): Promise<StockQuote[]> => {
+  const all = await loadSymbols();
+  const q = query.trim().toLowerCase();
+
+  if (!q) {
+    // Empty query backs the "popular stocks" list and the home marquee, so show
+    // the most heavily traded names rather than an alphabetical slice.
+    return [...all].sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0)).slice(0, 25);
+  }
+
+  return all
+    .filter(
+      (s) =>
+        s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+    )
+    .slice(0, 50);
+};
+
+// --- prediction ---------------------------------------------------------------
+
+/**
+ * Real model output from GET /api/v1/stocks/analyze.
+ *
+ * `includeNews` defaults to false deliberately. With news on, the backend
+ * scrapes headlines and runs FinBERT over them, which costs 30-90 seconds on a
+ * cold cache — far too long for a page load. The analyzer requests sentiment
+ * separately, on demand.
+ */
+export const fetchPrediction = async (
+  ticker: string,
+  includeNews = false
+): Promise<PredictionResult> => {
+  const data = await request<ApiAnalysis>(
+    `/api/v1/stocks/analyze?symbol=${encodeURIComponent(ticker)}` +
+      `&include_news=${includeNews}`
+  );
+
+  const p = data.price_prediction;
+  return {
+    ticker: data.symbol,
+    companyName: data.company_name,
+    nextDayPrice: p?.predicted_close ?? null,
+    confidence: p?.confidence ?? 0,
+    trend: mapTrend(p?.trend),
+    changePercent: p?.change_percent ?? null,
+    probabilityUp: p?.probability_up ?? null,
+    probabilityUpAdjusted: p?.probability_up_adjusted ?? null,
+    asOf: data.as_of,
+    latestPrice: data.latest_price,
+    sentimentScore: data.sentiment_analysis.score,
+    sentimentLabel: data.sentiment_analysis.label,
+    headlineCount: data.sentiment_analysis.headline_count,
+    sentimentStatus: data.sentiment_analysis.status,
+    modelStatus: data.model_status,
+    warnings: data.warnings ?? [],
+    generatedAt: new Date().toISOString(),
+  };
+};
+
+// --- AI deep analysis (GPT-5.6-Sol) ------------------------------------------
+
+import type { AiAnalysisResult } from '../types/stock';
+
+/**
+ * Deep AI analysis powered by GPT-5.6-Sol with internet news search.
+ *
+ * This can take 1-3 minutes because the agent router searches the web for
+ * recent news. The timeout is set to 5 minutes to be safe.
+ */
+export const fetchAiAnalysis = async (ticker: string): Promise<AiAnalysisResult> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min
+
+  try {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/api/v1/stocks/ai-analysis?symbol=${encodeURIComponent(ticker)}`,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+        }
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error('AI analysis timed out after 5 minutes. Please try again.');
+      }
+      throw new Error(
+        `Cannot reach the TradeVision API at ${API_BASE}. Is the backend running?`
+      );
+    }
+
+    if (!response.ok) {
+      let detail = `Request failed with status ${response.status}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string') detail = body.detail;
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new Error(detail);
+    }
+
+    return (await response.json()) as AiAnalysisResult;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// --- AI chat ------------------------------------------------------------------
+
+export interface ChatReply {
+  reply: string;
+  /** Already display-formatted by the backend, e.g. `get_quote(symbol=JKH.N0000)`. */
+  toolsUsed: string[];
+  warnings: string[];
+}
+
+export const sendChatMessage = async (
+  messages: Pick<ChatMessage, 'role' | 'content'>[],
+  symbol?: string
+): Promise<ChatReply> => {
+  const data = await request<{
+    reply: string;
+    tools_used: string[];
+    warnings: string[];
+  }>('/api/v1/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      context: symbol ? { symbol } : undefined,
+    }),
+  });
+
+  return {
+    reply: data.reply,
+    toolsUsed: data.tools_used ?? [],
+    warnings: data.warnings ?? [],
+  };
+};
+
+/**
+ * Whether the server has a Gemini key.
+ *
+ * Lets the UI disable the composer up front instead of letting the user type a
+ * question and then hit a 503. Never throws — an unreachable backend is reported
+ * as simply unavailable, which is true.
+ */
+export const fetchChatStatus = async (): Promise<{ available: boolean; detail: string | null }> => {
+  try {
+    const data = await request<{ available: boolean; detail: string | null }>(
+      '/api/v1/chat/status'
+    );
+    return { available: data.available, detail: data.detail };
+  } catch (e) {
+    return { available: false, detail: e instanceof Error ? e.message : 'Chat is unavailable.' };
+  }
+};
+
+// --- still mock: needs per-user persistence (auth + database) -----------------
 
 const mockWatchlist: WatchlistItem[] = [
   { ticker: 'JKH.N0000', name: 'John Keells Holdings', targetPrice: 200, alertEnabled: true },
@@ -40,93 +399,6 @@ const mockPortfolio: UserPortfolio = {
   dayChangePercent: 1.96,
 };
 
-// --- HELPER TO GENERATE CHART DATA ---
-const generateChartData = (basePrice: number, days: number): StockPrice[] => {
-  const data: StockPrice[] = [];
-  let currentPrice = basePrice;
-  const now = new Date();
-  
-  for (let i = days; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    
-    // Random walk
-    const change = currentPrice * (Math.random() * 0.06 - 0.03); // -3% to +3%
-    const open = currentPrice;
-    currentPrice = currentPrice + change;
-    const close = currentPrice;
-    const high = Math.max(open, close) * (1 + Math.random() * 0.02);
-    const low = Math.min(open, close) * (1 - Math.random() * 0.02);
-    const volume = Math.floor(Math.random() * 1000000) + 100000;
-    
-    data.push({
-      timestamp: date.toISOString().split('T')[0],
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
-  }
-  return data;
-};
+export const fetchWatchlist = async (): Promise<WatchlistItem[]> => mockWatchlist;
 
-// --- API METHODS ---
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export const fetchStockHistory = async (ticker: string, days: number): Promise<StockPrice[]> => {
-  await delay(200);
-  const quote = mockQuotes.find((q) => q.ticker === ticker);
-  const basePrice = quote ? quote.price : 100;
-  return generateChartData(basePrice, days);
-};
-
-export const fetchStockQuote = async (ticker: string): Promise<StockQuote> => {
-  await delay(200);
-  const quote = mockQuotes.find((q) => q.ticker === ticker);
-  if (!quote) throw new Error('Stock not found');
-  return quote;
-};
-
-export const fetchMarketSummary = async (): Promise<MarketSummary> => {
-  await delay(200);
-  return mockMarketSummary;
-};
-
-export const fetchWatchlist = async (): Promise<WatchlistItem[]> => {
-  await delay(200);
-  return mockWatchlist;
-};
-
-export const fetchPortfolio = async (): Promise<UserPortfolio> => {
-  await delay(200);
-  return mockPortfolio;
-};
-
-export const fetchPrediction = async (ticker: string): Promise<PredictionResult> => {
-  await delay(500);
-  const quote = mockQuotes.find((q) => q.ticker === ticker);
-  const currentPrice = quote ? quote.price : 100;
-  
-  // Random prediction
-  const isUp = Math.random() > 0.5;
-  const changePercent = Math.random() * 0.05; // Up to 5% change
-  const nextDayPrice = currentPrice * (1 + (isUp ? changePercent : -changePercent));
-  
-  return {
-    ticker,
-    nextDayPrice,
-    confidence: Math.floor(Math.random() * 30) + 60, // 60-90%
-    trend: isUp ? 'up' : 'down',
-    generatedAt: new Date().toISOString(),
-  };
-};
-
-export const searchStocks = async (query: string): Promise<StockQuote[]> => {
-  await delay(150);
-  const lowerQuery = query.toLowerCase();
-  return mockQuotes.filter(
-    (q) => q.ticker.toLowerCase().includes(lowerQuery) || q.name.toLowerCase().includes(lowerQuery)
-  );
-};
+export const fetchPortfolio = async (): Promise<UserPortfolio> => mockPortfolio;

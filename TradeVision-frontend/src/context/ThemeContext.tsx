@@ -36,6 +36,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 };
 
+// Hook is co-located with its provider by design; the rule only affects the
+// granularity of dev-server fast refresh, not runtime behaviour.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (context === undefined) {
