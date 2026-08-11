@@ -78,6 +78,36 @@ class InsufficientHistoryError(ValueError):
     """Not enough price rows to compute the feature vector."""
 
 
+def drop_non_trading_rows(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Keep only bars that actually traded. Shared by training and serving.
+
+    A zero-volume row is not "a quiet day" — no shares changed hands, so its
+    Close is the previous close carried forward. Yahoo's CSE feed makes this
+    impossible to ignore: it keeps emitting daily rows long after it loses the
+    exchange. Measured on JKH-N0000.CM, ~85% of days traded across 5 years but
+    only 7 of the most recent 129 did, with the last 8 closes byte-identical.
+
+    Left in, those rows do damage at both ends of the pipeline:
+      * Training  — they manufacture zero-return observations and zero-return
+        labels, teaching the model that "nothing happens" is the common case.
+      * Inference — they are the LAST rows, so they are the ones the prediction
+        is built from. Every return goes to 0, RSI pins at 50, and the 20-day
+        volume mean tends to 0, so Rel_Volume either goes NaN (a loud failure,
+        which is the good case) or clips to REL_VOLUME_CAP on the one day
+        something traded (a confident prediction from an artefact, which is not).
+
+    Dropping them is not cleaning-to-taste: it is removing rows that record the
+    absence of data. This MUST stay identical on both paths — a model trained on
+    traded-only bars and served forward-filled ones is exactly the train/serve
+    skew this module exists to prevent.
+    """
+    if "Volume" not in df.columns:
+        return df
+    volume = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+    return df[volume > 0]
+
+
 def _wilder_smooth(values: "pd.Series", period: int) -> "pd.Series":
     """
     Wilder's smoothing, seeded with a simple average (TA-Lib / pandas_ta style).

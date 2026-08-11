@@ -151,6 +151,21 @@ async def analyze_stock(
         df = await run_in_threadpool(price_data.get_price_history, ticker)
         latest_price = round(price_data.latest_close(df), 4)
         as_of = price_data.latest_date(df)
+
+        # Yahoo forward-fills CSE symbols after its feed goes stale; price_data
+        # trims those ghost rows, so `as_of` can legitimately be months behind.
+        # The prediction is still valid FOR THAT DATE — say so rather than let it
+        # read as a forecast for tomorrow.
+        stale_days = df.attrs.get("stale_days")
+        if stale_days is not None and stale_days > price_data.STALE_AFTER_DAYS:
+            warnings.append(
+                f"Newest real trading bar for {ticker.symbol} is {as_of} "
+                f"({stale_days} days old). Yahoo Finance has stopped updating this "
+                f"symbol and its recent rows were forward-filled placeholders, which "
+                f"have been discarded. The prediction is for the day after {as_of}, "
+                f"not for tomorrow."
+            )
+
         if technical_summary is None:
             from services.features import add_indicators, latest_technicals
             technical_summary = latest_technicals(add_indicators(df))

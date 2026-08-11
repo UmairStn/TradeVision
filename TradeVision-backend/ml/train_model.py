@@ -29,7 +29,12 @@ import xgboost as xgb
 # pyrefly: ignore [missing-import]
 from sklearn.metrics import accuracy_score, auc, log_loss, roc_curve
 
-from services.features import FEATURE_COLUMNS, add_indicators, add_model_features
+from services.features import (
+    FEATURE_COLUMNS,
+    add_indicators,
+    add_model_features,
+    drop_non_trading_rows,
+)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(_HERE, "data"))
@@ -40,37 +45,64 @@ PLOT_OUT = os.getenv("PLOT_OUT", os.path.join(_HERE, "roc_curve.png"))
 
 TRAIN_SPLIT = 0.8
 
-# Stale-close filter. Thin CSE counters print unchanged closes for days at a
-# time (often with zero volume); those rows manufacture artificial zero-return
-# observations that corrupt both features and labels. Dropping them is
-# legitimate — they carry no information about the next day.
-STALE_ZERO_VOLUME = True
+# A single-day move larger than this is not a market move. CSE applies price
+# bands, and prices here are fetched with auto_adjust=False, so a 5x or 10x jump
+# is an unadjusted split or scrip issue showing up as a fake return. Sri Lankan
+# banks issue scrip dividends most years, so this is expected, not exotic.
+#
+# The contamination spreads: a bad return at row i also poisons Return_Lag1..3 at
+# rows i+1..i+3 and the label at row i-1, so the whole neighbourhood is dropped,
+# not just the offending row.
+MAX_ABS_DAILY_RETURN = 0.40
+
+
+def _drop_split_artifacts(df: "pd.DataFrame", name: str) -> "pd.DataFrame":
+    """Remove rows whose features or label were built from a split-sized jump."""
+    contaminated = df["Current_Return"].abs() > MAX_ABS_DAILY_RETURN
+
+    # Same test applied to each lag: a lag column IS an earlier Current_Return,
+    # so this covers rows i+1..i+3 without index arithmetic.
+    for lag in ("Return_Lag1", "Return_Lag2", "Return_Lag3"):
+        contaminated |= df[lag].abs() > MAX_ABS_DAILY_RETURN
+
+    # Row i-1's label is the return at row i, so a bad return poisons it too.
+    contaminated |= contaminated.shift(-1, fill_value=False)
+
+    n_bad = int(contaminated.sum())
+    if n_bad:
+        print(f"    (dropped {n_bad} rows around {name}'s split/scrip jumps)")
+    return df[~contaminated]
 
 
 def load_and_prepare(path: str) -> "pd.DataFrame":
     """One CSV -> a frame carrying the model features and the direction target."""
+    name = os.path.basename(path)
     df = pd.read_csv(path)
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
 
-    if STALE_ZERO_VOLUME:
-        before = len(df)
-        df = df[~((df["Close"] == df["Close"].shift(1)) & (df["Volume"] == 0))]
-        df = df.reset_index(drop=True)
-        if len(df) < before:
-            print(f"    (dropped {before - len(df)} stale zero-volume rows)")
+    # Identical rule to services/price_data.py, from the same shared function:
+    # a bar counts only if it traded. Yahoo forward-fills the CSE feed, and
+    # those rows manufacture zero-return observations AND zero-return labels.
+    before = len(df)
+    df = drop_non_trading_rows(df).reset_index(drop=True)
+    if len(df) < before:
+        print(f"    (dropped {before - len(df)} non-trading rows)")
 
     # Recompute indicators with the shared code — the same path the API uses.
     df = add_indicators(df)
     df = add_model_features(df)
 
     # Target: did the NEXT day close higher? Flat days count as "down", matching
-    # the original script.
-    next_day_return = df["Close"].pct_change().shift(-1)
-    df["Target_Direction"] = (next_day_return > 0).astype(int)
+    # the original script. Computed BEFORE the split filter runs, so removing a
+    # row can never splice two non-adjacent days into one fake overnight return.
+    df["Target_Direction"] = (df["Current_Return"].shift(-1) > 0).astype(int)
 
-    # The final row has no next day, so its target is meaningless.
+    # The newest row has no next day; the NaN comparison above scored it 0,
+    # which is a fabricated label rather than a measured one.
     df = df.iloc[:-1]
+
+    df = _drop_split_artifacts(df, name)
 
     return df.dropna(subset=FEATURE_COLUMNS + ["Target_Direction"])
 
