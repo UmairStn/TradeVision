@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Search, Brain, TrendingUp, TrendingDown, Loader2, AlertCircle, Newspaper, RefreshCw,
   Sparkles, ExternalLink, ShieldAlert, Eye, ChevronRight,
@@ -8,9 +8,12 @@ import { StockCard } from '../components/StockCard';
 import { LiveChart } from '../components/LiveChart';
 import type { StockQuote, StockPrice, PredictionResult, AiAnalysisResult } from '../types/stock';
 import { searchStocks, fetchStockQuote, fetchStockHistory, fetchPrediction, fetchAiAnalysis } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export const StockAnalyzer: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<StockQuote[]>([]);
   const [selectedStock, setSelectedStock] = useState<StockQuote | null>(null);
@@ -114,6 +117,11 @@ export const StockAnalyzer: React.FC = () => {
   }, [ticker]);
 
   const loadAiAnalysis = useCallback(async () => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+
     setIsLoadingAiAnalysis(true);
     setAiAnalysisError(null);
     setAiAnalysis(null);
@@ -125,7 +133,7 @@ export const StockAnalyzer: React.FC = () => {
     } finally {
       setIsLoadingAiAnalysis(false);
     }
-  }, [ticker]);
+  }, [ticker, user, navigate]);
 
   const handleSelectStock = (next: string) => {
     setSearchParams({ ticker: next });
@@ -370,8 +378,8 @@ export const StockAnalyzer: React.FC = () => {
                       transition-all duration-300 hover:scale-[1.02]
                       disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
                   >
-                    <Sparkles className="w-5 h-5 mr-3 group-hover:animate-pulse" />
-                    AI Deep Analysis — Generate Insights
+                    {!user ? <AlertCircle className="w-5 h-5 mr-3 group-hover:text-white/80" /> : <Sparkles className="w-5 h-5 mr-3 group-hover:animate-pulse" />}
+                    {user ? 'AI Deep Analysis — Generate Insights' : 'Login for AI Deep Analysis'}
                     <ChevronRight className="w-5 h-5 ml-3 group-hover:translate-x-1 transition-transform" />
                   </button>
                   <p className="text-xs text-text-secondary text-center mt-2">
