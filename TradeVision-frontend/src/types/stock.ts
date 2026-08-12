@@ -46,18 +46,30 @@ export interface MarketSummary {
 }
 
 export interface WatchlistItem {
+  id?: string;
   ticker: string;
   name: string;
   targetPrice: number | null;
   alertEnabled: boolean;
+  currentPrice?: number;
+  dayChange?: number;
+  dayChangePct?: number;
+}
+
+export interface PortfolioTransaction {
+  id: string;
+  shares: number;
+  price: number;
+  dateAcquired: string;
 }
 
 export interface PortfolioHolding {
   ticker: string;
   name: string;
-  shares: number;
+  totalShares: number;
   avgCost: number;
   currentPrice: number;
+  transactions: PortfolioTransaction[];
 }
 
 export interface UserPortfolio {
