@@ -8,6 +8,7 @@ import type {
   PredictionResult,
   ChatMessage,
 } from '../types/stock';
+import { supabase } from '../lib/supabase';
 
 /**
  * Backend client.
@@ -26,11 +27,20 @@ import type {
 const API_BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (session?.access_token) {
+    headers.set('Authorization', `Bearer ${session.access_token}`);
+  }
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
       ...init,
+      headers,
     });
   } catch {
     // fetch only rejects on network-level failure, which in practice means the
@@ -381,24 +391,137 @@ export const fetchChatStatus = async (): Promise<{ available: boolean; detail: s
   }
 };
 
-// --- still mock: needs per-user persistence (auth + database) -----------------
+// --- Portfolio & Watchlist (Backend integration) --------------------------------
 
-const mockWatchlist: WatchlistItem[] = [
-  { ticker: 'JKH.N0000', name: 'John Keells Holdings', targetPrice: 200, alertEnabled: true },
-  { ticker: 'EXPO.N0000', name: 'Expolanka Holdings', targetPrice: 150, alertEnabled: false },
-  { ticker: 'COMB.N0000', name: 'Commercial Bank of Ceylon', targetPrice: null, alertEnabled: true },
-];
+interface ApiWatchlistItem {
+  id: string;
+  symbol: string;
+}
 
-const mockPortfolio: UserPortfolio = {
-  holdings: [
-    { ticker: 'JKH.N0000', name: 'John Keells Holdings', shares: 1000, avgCost: 180.0, currentPrice: 195.5 },
-    { ticker: 'DIST.N0000', name: 'Distilleries Company of SL', shares: 5000, avgCost: 25.0, currentPrice: 28.5 },
-  ],
-  totalValue: 195500 + 142500,
-  dayChange: 2500 + 4000,
-  dayChangePercent: 1.96,
+interface ApiPortfolioItem {
+  id: string;
+  symbol: string;
+  quantity: number;
+  price: number;
+  date_acquired: string;
+}
+
+export const fetchWatchlist = async (): Promise<WatchlistItem[]> => {
+  const [data, allSymbols] = await Promise.all([
+    request<ApiWatchlistItem[]>('/api/v1/watchlist/'),
+    loadSymbols().catch(() => []) // fail gracefully if market data is down
+  ]);
+
+  return data.map(item => {
+    const quote = allSymbols.find(s => s.ticker === item.symbol);
+    return {
+      ticker: item.symbol,
+      name: quote?.name || item.symbol, // UI needs a name, use market name if found
+      targetPrice: null,
+      alertEnabled: false,
+      id: item.id,
+      currentPrice: quote?.price,
+      dayChange: quote?.change,
+      dayChangePct: quote?.changePercent,
+    };
+  });
 };
 
-export const fetchWatchlist = async (): Promise<WatchlistItem[]> => mockWatchlist;
+export const addToWatchlist = async (symbol: string): Promise<void> => {
+  await request('/api/v1/watchlist/', {
+    method: 'POST',
+    body: JSON.stringify({ symbol })
+  });
+};
 
-export const fetchPortfolio = async (): Promise<UserPortfolio> => mockPortfolio;
+export const removeFromWatchlist = async (id: string): Promise<void> => {
+  await request(`/api/v1/watchlist/${id}`, { method: 'DELETE' });
+};
+
+export const fetchPortfolio = async (): Promise<UserPortfolio> => {
+  const [data, allSymbols] = await Promise.all([
+    request<ApiPortfolioItem[]>('/api/v1/portfolio/'),
+    loadSymbols().catch(() => [])
+  ]);
+  
+  let totalValue = 0;
+  let totalCost = 0;
+  let dayChangeAbs = 0;
+  let prevTotalValue = 0;
+  
+  const grouped = new Map<string, {
+    ticker: string;
+    name: string;
+    transactions: { id: string; shares: number; price: number; dateAcquired: string }[];
+    currentPrice: number;
+    quoteChange: number;
+  }>();
+
+  for (const item of data) {
+    if (!grouped.has(item.symbol)) {
+      const quote = allSymbols.find(s => s.ticker === item.symbol);
+      grouped.set(item.symbol, {
+        ticker: item.symbol,
+        name: quote?.name || item.symbol,
+        transactions: [],
+        currentPrice: quote?.price || item.price,
+        quoteChange: quote?.change || 0
+      });
+    }
+    grouped.get(item.symbol)!.transactions.push({
+      id: item.id,
+      shares: item.quantity,
+      price: item.price,
+      dateAcquired: item.date_acquired || 'N/A'
+    });
+  }
+
+  const holdings = Array.from(grouped.values()).map(group => {
+    let groupShares = 0;
+    let groupCost = 0;
+    
+    for (const t of group.transactions) {
+      groupShares += t.shares;
+      groupCost += t.shares * t.price;
+    }
+    
+    const avgCost = groupShares > 0 ? groupCost / groupShares : 0;
+    const itemTotalValue = group.currentPrice * groupShares;
+    const itemTotalCost = groupCost;
+    const itemDayChange = group.quoteChange * groupShares;
+    
+    totalValue += itemTotalValue;
+    totalCost += itemTotalCost;
+    dayChangeAbs += itemDayChange;
+    prevTotalValue += (group.currentPrice - group.quoteChange) * groupShares;
+    
+    return {
+      ticker: group.ticker,
+      name: group.name,
+      totalShares: groupShares,
+      avgCost,
+      currentPrice: group.currentPrice,
+      transactions: group.transactions.sort((a, b) => new Date(b.dateAcquired).getTime() - new Date(a.dateAcquired).getTime())
+    };
+  });
+  
+  const dayChangePercent = prevTotalValue > 0 ? (dayChangeAbs / prevTotalValue) * 100 : 0;
+  
+  return {
+    holdings,
+    totalValue,
+    dayChange: dayChangeAbs,
+    dayChangePercent: Number(dayChangePercent.toFixed(2))
+  };
+};
+
+export const addToPortfolio = async (symbol: string, quantity: number, price: number, date_acquired: string): Promise<void> => {
+  await request('/api/v1/portfolio/', {
+    method: 'POST',
+    body: JSON.stringify({ symbol, quantity, price, date_acquired })
+  });
+};
+
+export const removeFromPortfolio = async (id: string): Promise<void> => {
+  await request(`/api/v1/portfolio/${id}`, { method: 'DELETE' });
+};
