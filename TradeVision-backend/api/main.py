@@ -3,7 +3,7 @@ from fastapi import FastAPI
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import chat, market, prediction
+from api.routes import chat, market, prediction, watchlist, portfolio
 
 app = FastAPI(
     title="SmartInvestor-Lanka API",
@@ -36,6 +36,8 @@ app.add_middleware(
 app.include_router(prediction.router)
 app.include_router(market.router)
 app.include_router(chat.router)
+app.include_router(watchlist.router)
+app.include_router(portfolio.router)
 
 
 @app.get("/")

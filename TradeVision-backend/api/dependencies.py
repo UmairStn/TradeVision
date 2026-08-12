@@ -21,6 +21,12 @@ the SHARED analyzer — the scraper is cheap, FinBERT is not.
 
 import os
 import threading
+# pyrefly: ignore [missing-import]
+import jwt
+# pyrefly: ignore [missing-import]
+from fastapi import Depends, HTTPException, status
+# pyrefly: ignore [missing-import]
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from services.news_pipeline import NewsSentimentPipeline
 from services.prediction_engine import StockPredictionEngine
@@ -74,3 +80,37 @@ def build_news_pipeline() -> NewsSentimentPipeline:
     Single-use by design — see the module docstring.
     """
     return NewsSentimentPipeline(mode=SCRAPER_MODE, analyzer=get_analyzer())
+
+security = HTTPBearer(auto_error=False)
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verifies the Supabase JWT token and returns the user payload."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = credentials.credentials
+    try:
+        # Supabase uses HS256 for signing its JWTs
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False}
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

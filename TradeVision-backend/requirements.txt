@@ -3,6 +3,7 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 alembic
+PyJWT
 # xgboost-cpu, not xgboost: the default wheel depends on nvidia-nccl-cu12,
 # which adds ~628MB of CUDA libraries that a CPU-only deployment never loads.
 # Same `import xgboost` API. Switch back only if you move to GPU training.
