@@ -135,12 +135,12 @@ Gemini interprets user intent, invokes the appropriate backend function, and con
 
 # 🗺️ Roadmap
 
-- [ ] Complete XGBoost prediction pipeline
-- [ ] Integrate FinBERT sentiment analysis
-- [ ] Finalize fusion prediction model
-- [ ] Implement ticker resolution
-- [ ] Complete backend API
-- [ ] Finish portfolio dashboard
+- [x] Complete XGBoost prediction pipeline
+- [x] Integrate FinBERT sentiment analysis
+- [x] Finalize fusion prediction model
+- [x] Implement ticker resolution
+- [x] Complete backend API
+- [x] Finish portfolio dashboard
 - [ ] Complete chatbot integration
 - [ ] End-to-end testing using live CSE data
 - [ ] Deploy production version

@@ -10,6 +10,15 @@ endpoint testable in the browser as well as in Postman.
 from pydantic import BaseModel, Field
 
 
+class ArticleBlock(BaseModel):
+    headline: str
+    article_url: str
+    source: str
+    age_days: int | None = None
+    sentiment_score: float | None = None
+    scraped_at: str
+
+
 class SentimentBlock(BaseModel):
     score: float = Field(..., description="FinBERT sentiment, -1.0 (bearish) to 1.0 (bullish).")
     label: str = Field(..., description="Bullish, Bearish or Neutral.")
@@ -20,6 +29,9 @@ class SentimentBlock(BaseModel):
             "'ok', or why the score fell back to neutral "
             "('no_articles_found', 'skipped', 'error: ...')."
         ),
+    )
+    articles: list[ArticleBlock] = Field(
+        default_factory=list, description="Raw articles scraped for this ticker."
     )
 
 

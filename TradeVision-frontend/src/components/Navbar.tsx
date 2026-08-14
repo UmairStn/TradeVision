@@ -3,15 +3,18 @@ import { Link, useLocation } from 'react-router-dom';
 import { LineChart, Menu, X } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export const Navbar: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const { user, signOut } = useAuth();
 
   const navLinks = [
     { name: 'Home', path: '/' },
     { name: 'Stock Analyzer', path: '/analyzer' },
     { name: 'Top Stocks', path: '/top-stocks' },
+    { name: 'AI Chat', path: '/chat' },
     { name: 'Dashboard', path: '/dashboard' },
   ];
 
@@ -53,18 +56,34 @@ export const Navbar: React.FC = () => {
             
             <div className="flex items-center space-x-4 ml-4 pl-4 border-l border-border">
               <ThemeToggle />
-              <Link
-                to="/login"
-                className="text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
-              >
-                Login
-              </Link>
-              <Link
-                to="/register"
-                className="px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/90 transition-all shadow-lg shadow-accent-green/20"
-              >
-                Get Started
-              </Link>
+              {!user ? (
+                <>
+                  <Link
+                    to="/login"
+                    className="text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/90 transition-all shadow-lg shadow-accent-green/20"
+                  >
+                    Get Started
+                  </Link>
+                </>
+              ) : (
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm font-medium text-text-primary">
+                    {user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'User'}
+                  </span>
+                  <button
+                    onClick={signOut}
+                    className="text-sm font-medium text-text-secondary hover:text-accent-red transition-colors"
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -100,20 +119,39 @@ export const Navbar: React.FC = () => {
               </Link>
             ))}
             <div className="mt-4 pt-4 border-t border-border flex flex-col space-y-2 px-3">
-              <Link
-                to="/login"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="block text-center py-2 text-base font-medium text-text-secondary hover:text-text-primary"
-              >
-                Login
-              </Link>
-              <Link
-                to="/register"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="block text-center py-2 rounded-lg bg-accent-green text-white text-base font-semibold"
-              >
-                Get Started
-              </Link>
+              {!user ? (
+                <>
+                  <Link
+                    to="/login"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="block text-center py-2 text-base font-medium text-text-secondary hover:text-text-primary"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="block text-center py-2 rounded-lg bg-accent-green text-white text-base font-semibold"
+                  >
+                    Get Started
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <div className="text-center py-2 text-sm text-text-primary font-medium border-b border-border/50 mb-2">
+                    {user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'User'}
+                  </div>
+                  <button
+                    onClick={() => {
+                      signOut();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="block w-full text-center py-2 text-base font-medium text-accent-red hover:bg-secondary rounded-lg"
+                  >
+                    Logout
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

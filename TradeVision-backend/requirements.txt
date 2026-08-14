@@ -3,6 +3,7 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 alembic
+PyJWT
 # xgboost-cpu, not xgboost: the default wheel depends on nvidia-nccl-cu12,
 # which adds ~628MB of CUDA libraries that a CPU-only deployment never loads.
 # Same `import xgboost` API. Switch back only if you move to GPU training.
@@ -27,3 +28,11 @@ yfinance
 # XGBClassifier is the sklearn wrapper, so loading the trained artifact with
 # the same class it was saved from requires scikit-learn at runtime.
 scikit-learn
+# Gemini, for the AI chat (services/gemini_chat.py). The `google-genai` package,
+# NOT the deprecated `google-generativeai` — the two have different import paths
+# (`from google import genai`) and different function-calling APIs.
+#
+# Pinned to a minor: the chat loop depends on response.function_calls and
+# Part.from_function_response, which are 1.x surface. The app still boots without
+# this package installed — /chat returns 503 and nothing else is affected.
+google-genai==1.*

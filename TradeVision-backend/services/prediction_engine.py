@@ -126,7 +126,7 @@ class StockPredictionEngine:
 
         # 1. Prices (full history for converging indicators) -> features for the
         #    LAST row. No company identity is passed: the model is cross-sectional.
-        df = price_data.get_price_history(ticker)
+        df = price_data.get_prediction_history(ticker)
         feature_row = build_feature_row(df)
         indicators = add_indicators(df)
 
@@ -163,6 +163,6 @@ class StockPredictionEngine:
 
     def feature_row(self, ticker: Ticker) -> dict:
         """The exact feature vector the model will see, for debugging/parity checks."""
-        df = price_data.get_price_history(ticker)
+        df = price_data.get_prediction_history(ticker)
         row = build_feature_row(df)
         return row.to_dict(orient="records")[0]

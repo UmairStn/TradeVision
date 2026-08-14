@@ -49,33 +49,60 @@ FEATURE_COLUMNS = [
     "High_Pct",
     "Low_Pct",
     "Rel_Volume",
-    "RSI_14",
-    "RSI_7",
+    "RSI_3",
     "Return_Lag1",
     "Return_Lag2",
-    "Return_Lag3",
 ]
 
 # Raw OHLCV columns every input frame must carry.
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
 # Lookback for the relative-volume baseline.
-VOLUME_WINDOW = 20
+VOLUME_WINDOW = 3
 
 # Ceiling on Rel_Volume. A near-dormant counter that suddenly trades once can
 # produce a ratio in the hundreds; unclipped, that single outlier dominates the
 # split search and the model learns from an artefact.
 REL_VOLUME_CAP = 10.0
 
-# RSI_14 needs 15 rows to emit a first value and Wilder smoothing is recursive,
-# so RSI computed over a short window differs from RSI over full history.
-# Rel_Volume needs VOLUME_WINDOW rows. 30 is the floor for a usable answer;
-# callers should feed ~6 months.
-MIN_ROWS = 30
+# RSI_3 needs 4 rows to emit a first value and Wilder smoothing is recursive.
+# Rel_Volume needs VOLUME_WINDOW rows. 4 is the floor for a usable answer;
+# callers should feed exactly 4-5 rows from the CSE API.
+MIN_ROWS = 4
 
 
 class InsufficientHistoryError(ValueError):
     """Not enough price rows to compute the feature vector."""
+
+
+def drop_non_trading_rows(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Keep only bars that actually traded. Shared by training and serving.
+
+    A zero-volume row is not "a quiet day" — no shares changed hands, so its
+    Close is the previous close carried forward. Yahoo's CSE feed makes this
+    impossible to ignore: it keeps emitting daily rows long after it loses the
+    exchange. Measured on JKH-N0000.CM, ~85% of days traded across 5 years but
+    only 7 of the most recent 129 did, with the last 8 closes byte-identical.
+
+    Left in, those rows do damage at both ends of the pipeline:
+      * Training  — they manufacture zero-return observations and zero-return
+        labels, teaching the model that "nothing happens" is the common case.
+      * Inference — they are the LAST rows, so they are the ones the prediction
+        is built from. Every return goes to 0, RSI pins at 50, and the 20-day
+        volume mean tends to 0, so Rel_Volume either goes NaN (a loud failure,
+        which is the good case) or clips to REL_VOLUME_CAP on the one day
+        something traded (a confident prediction from an artefact, which is not).
+
+    Dropping them is not cleaning-to-taste: it is removing rows that record the
+    absence of data. This MUST stay identical on both paths — a model trained on
+    traded-only bars and served forward-filled ones is exactly the train/serve
+    skew this module exists to prevent.
+    """
+    if "Volume" not in df.columns:
+        return df
+    volume = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+    return df[volume > 0]
 
 
 def _wilder_smooth(values: "pd.Series", period: int) -> "pd.Series":
@@ -112,9 +139,9 @@ def _rsi_from_averages(avg_gain: "pd.Series", avg_loss: "pd.Series") -> "pd.Seri
     for days at a time, and a false 100 would tell the model "extremely
     overbought" when nothing traded.
 
-      no losses, some gains -> 100  (genuinely overbought)
-      no gains,  some losses->   0  (genuinely oversold)
-      neither  (flat)       ->  50  (no information, neutral)
+    no losses, some gains -> 100  (genuinely overbought)
+    no gains,  some losses->   0  (genuinely oversold)
+    neither  (flat)       ->  50  (no information, neutral)
     """
     rs = avg_gain / avg_loss.replace(0.0, np.nan)
     out = 100.0 - (100.0 / (1.0 + rs))
@@ -163,7 +190,7 @@ def add_indicators(df: "pd.DataFrame") -> "pd.DataFrame":
     Attach every indicator this system reports, on a copy of `df`.
 
     Two distinct groups:
-      * Model features — RSI_14/RSI_7 (0-100 here; rescaled in build_feature_row).
+      * Model features — RSI_3 (0-100 here; rescaled in build_feature_row).
       * Display only — SMA/EMA/MACD, surfaced in the API's technical_summary.
         These are NOT model inputs; the artifact was trained without them.
     """
@@ -175,16 +202,13 @@ def add_indicators(df: "pd.DataFrame") -> "pd.DataFrame":
     close = out["Close"].astype(float)
 
     # --- Model features ---
-    out["RSI_14"] = rsi(close, 14)
-    out["RSI_7"] = rsi(close, 7)
+    out["RSI_3"] = rsi(close, 3)
 
     # --- Display only ---
-    out["SMA_10"] = close.rolling(window=10).mean()
-    out["SMA_20"] = close.rolling(window=20).mean()
-    out["EMA_12"] = close.ewm(span=12, adjust=False).mean()
-    out["EMA_26"] = close.ewm(span=26, adjust=False).mean()
-    out["MACD"] = out["EMA_12"] - out["EMA_26"]
-    out["MACD_Signal"] = out["MACD"].ewm(span=9, adjust=False).mean()
+    out["SMA_3"] = close.rolling(window=3).mean()
+    out["EMA_3"] = close.ewm(span=3, adjust=False).mean()
+    out["MACD"] = out["EMA_3"] - close.ewm(span=5, adjust=False).mean()
+    out["MACD_Signal"] = out["MACD"].ewm(span=2, adjust=False).mean()
     out["MACD_Hist"] = out["MACD"] - out["MACD_Signal"]
 
     return out
@@ -193,7 +217,7 @@ def add_indicators(df: "pd.DataFrame") -> "pd.DataFrame":
 def add_model_features(df: "pd.DataFrame") -> "pd.DataFrame":
     """
     Attach the model features. Expects add_indicators() to have run already
-    (or RSI_14/RSI_7 to be present on the 0-100 scale, as in the training CSVs).
+    (or RSI_3 to be present on the 0-100 scale, as in the training CSVs).
 
     No company identity is taken or added — see the module docstring.
     """
@@ -211,18 +235,16 @@ def add_model_features(df: "pd.DataFrame") -> "pd.DataFrame":
     # a large cap and a thin counter alike.
     volume = out["Volume"].astype(float)
     avg_volume = volume.rolling(VOLUME_WINDOW, min_periods=VOLUME_WINDOW).mean()
-    # replace(0 -> NaN) before dividing: a fully dormant 20-day window would
+    # replace(0 -> NaN) before dividing: a fully dormant window would
     # otherwise yield inf, which XGBoost accepts silently as a huge value.
     out["Rel_Volume"] = (volume / avg_volume.replace(0.0, np.nan)).clip(upper=REL_VOLUME_CAP)
 
     # Training rescaled the CSV's 0-100 RSI columns to 0-1.
-    out["RSI_14"] = out["RSI_14"].astype(float) / 100.0
-    out["RSI_7"] = out["RSI_7"].astype(float) / 100.0
+    out["RSI_3"] = out["RSI_3"].astype(float) / 100.0
 
     out["Current_Return"] = close.pct_change()
     out["Return_Lag1"] = out["Current_Return"].shift(1)
     out["Return_Lag2"] = out["Current_Return"].shift(2)
-    out["Return_Lag3"] = out["Current_Return"].shift(3)
 
     return out
 
@@ -260,8 +282,7 @@ def latest_technicals(df_with_indicators: "pd.DataFrame") -> dict:
     """Display indicators for the newest row, as plain floats for JSON."""
     last = df_with_indicators.iloc[-1]
     fields = [
-        "RSI_14", "RSI_7", "SMA_10", "SMA_20",
-        "EMA_12", "EMA_26", "MACD", "MACD_Signal", "MACD_Hist",
+        "RSI_3", "SMA_3", "EMA_3", "MACD", "MACD_Signal", "MACD_Hist",
     ]
     out = {}
     for name in fields:

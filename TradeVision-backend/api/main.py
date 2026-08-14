@@ -3,7 +3,7 @@ from fastapi import FastAPI
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import prediction
+from api.routes import chat, market, prediction, watchlist, portfolio
 
 app = FastAPI(
     title="SmartInvestor-Lanka API",
@@ -15,7 +15,9 @@ app = FastAPI(
 )
 
 # The Vite dev server runs on a different origin, so the browser blocks API calls
-# without this. Ports 5173/3000 cover Vite's default and its common fallback.
+# without this. Ports 5173/3000 cover Vite's default and its common fallback;
+# the bare hosts cover the prod frontend container, which nginx serves on port 80
+# (origin "http://localhost", no port suffix).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -23,6 +25,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost",
+        "http://127.0.0.1",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -30,6 +34,10 @@ app.add_middleware(
 )
 
 app.include_router(prediction.router)
+app.include_router(market.router)
+app.include_router(chat.router)
+app.include_router(watchlist.router)
+app.include_router(portfolio.router)
 
 
 @app.get("/")

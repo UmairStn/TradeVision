@@ -146,12 +146,35 @@ def resolve_open(symbol: str) -> Ticker:
             f"Malformed ticker {symbol!r}. Expected a form like 'JKH.N0000' or 'JKH'."
         )
 
+    real_name = root
+    is_known = False
+
+    try:
+        from services import cse_api
+        import re
+
+        quote_data = cse_api.quote(key)
+        if quote_data and quote_data.get("name"):
+            raw_name = quote_data["name"]
+            # Strip common suffixes so Google News finds it better
+            # e.g., "SIERRA CABLES PLC", "SAMPATH BANK PLC." -> "SIERRA CABLES"
+            cleaned_name = re.sub(r"(?i)\s+PLC\.?$", "", raw_name).strip()
+            
+            # Use the cleaned name if it's substantial, otherwise fall back
+            if cleaned_name and cleaned_name.upper() != root.upper():
+                real_name = cleaned_name
+                is_known = True
+    except Exception:
+        # If the CSE API call fails, we just degrade gracefully
+        # and use the ticker root as before.
+        pass
+
     return Ticker(
         symbol=key,
-        name=root,
+        name=real_name,
         asset_id=None,
         yahoo_symbol=key.replace(".", "-") + ".CM",
-        is_known=False,
+        is_known=is_known,
     )
 
 
