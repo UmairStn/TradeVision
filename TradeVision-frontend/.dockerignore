@@ -23,7 +23,12 @@ dist-ssr
 *.log
 npm-debug.log*
 
-# Local environment overrides
+# Local environment overrides.
+#
+# .env is excluded too, deliberately: the prod bundle receives VITE_API_URL as a
+# build ARG, so a host .env must never be copied in and frozen into an image
+# layer. This does not affect frontend-dev — bind mounts ignore .dockerignore, so
+# the dev container still reads /app/.env through the `..:/app` mount.
 *.local
-.env.local
-.env.*.local
+.env
+.env.*

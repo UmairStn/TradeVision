@@ -1,21 +1,37 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { LineChart, Mail, Lock } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       setError('Please fill in all fields');
       return;
     }
-    // Simulate login success & redirect to dashboard
-    navigate('/dashboard');
+    
+    setLoading(true);
+    setError('');
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    setLoading(false);
+
+    if (signInError) {
+      setError(signInError.message);
+    } else {
+      navigate('/dashboard');
+    }
   };
 
   return (
@@ -77,9 +93,10 @@ export const Login: React.FC = () => {
 
           <button 
             type="submit"
-            className="w-full py-3 rounded-xl bg-accent-green text-white font-semibold hover:bg-accent-green/90 transition-all shadow-lg shadow-accent-green/20"
+            disabled={loading}
+            className="w-full py-3 rounded-xl bg-accent-green text-white font-semibold hover:bg-accent-green/90 transition-all shadow-lg shadow-accent-green/20 disabled:opacity-50"
           >
-            Log In
+            {loading ? 'Logging In...' : 'Log In'}
           </button>
         </form>
 

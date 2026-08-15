@@ -2,8 +2,8 @@
 # docker-compose.yml — CSE Stock Prediction Backend
 # =============================================================
 # Usage:
-#   Development (hot-reload):   docker compose up
-#   Production (standard):      docker compose --profile prod up
+#   Development (hot-reload):   docker compose -f docker/docker-compose.yml up -d backend-dev
+#   Production (standard):     docker compose -f docker/docker-compose.yml --profile prod up -d backend-prod
 # =============================================================
 
 name: tradevision-backend
@@ -23,6 +23,21 @@ services:
     volumes:
       # Mount source code so edits on the host reflect instantly
       - ..:/app
+      # Mount Hugging Face cache so model files survive container rebuilds!
+      - hf_cache:/root/.cache/huggingface
+    # GEMINI_API_KEY (and the optional GEMINI_MODEL / *_CACHE_TTL overrides) come
+    # from TradeVision-backend/.env — the stack root, which is also where
+    # python-dotenv looks if you run uvicorn outside Docker. The path is relative
+    # to THIS file, not to your shell's directory. `required: false` keeps plain
+    # `up` working with no .env present at all: the app still boots and serves
+    # market data, and only /api/v1/chat reports 503.
+    env_file:
+      - path: ../.env
+        required: false
+    # GEMINI_API_KEY is deliberately NOT repeated below. Compose lets
+    # `environment:` win over `env_file:`, and `${GEMINI_API_KEY:-}` collapses to
+    # an empty string when the host shell has no such variable — which would
+    # silently blank out the key the .env file just supplied.
     environment:
       - NODE_ENV=development
       - PYTHONPATH=/app
@@ -40,9 +55,24 @@ services:
     container_name: trade-vision-backend-prod
     ports:
       - "8000:8000"
+    volumes:
+      # Without this, prod re-downloads FinBERT (~400MB) on every container
+      # recreate. Same volume as dev, so the model is fetched once for both.
+      - hf_cache:/root/.cache/huggingface
+    # Same stack-root .env as dev — see the note on backend-dev above for why the
+    # key is not repeated under `environment:`.
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       - NODE_ENV=production
       - PYTHONPATH=/app
     restart: unless-stopped
     profiles:
       - prod
+
+# -----------------------------------------------------------------
+# Named Volumes (Required for hf_cache to persist Hugging Face models)
+# -----------------------------------------------------------------
+volumes:
+  hf_cache:
